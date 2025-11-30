@@ -1,40 +1,55 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/wait.h>
+#include <stdio.h>      // printf, scanf 등 입출력 함수
+#include <stdlib.h>     // exit, system 등 시스템 함수
+#include <unistd.h>     // fork, execlp 등 프로세스 관련 함수
+#include <sys/wait.h>   // waitpid 등 프로세스 대기 함수
 
+/**
+ * 게임 정보를 저장하는 구조체
+ */
 typedef struct {
-    int id;
-    char name[50];
-    char command[100];
-    char description[100];
+    int id;                  // 게임 번호 (1, 2, 3, 4)
+    char name[50];           // 게임 이름 (예: "Neverball")
+    char command[100];       // 실행 명령어 (예: "neverball")
+    char description[100];   // 게임 설명
 } Game;
 
 /**
- * 게임 실행
+ * 게임 실행 함수
+ * @param command 실행할 게임 명령어 (예: "neverball")
+ * @return 성공시 0, 실패시 -1
  */
 int run_game(const char* command) {
     printf("\n게임을 실행합니다: %s\n", command);
     printf("게임 종료 후 스코어가 파싱됩니다.\n\n");
     
+    // fork(): 현재 프로세스를 복제해서 자식 프로세스 생성
+    // 부모는 자식의 PID를 받고, 자식은 0을 받음
     pid_t pid = fork();
     
     if (pid < 0) {
+        // fork 실패 (메모리 부족 등)
         fprintf(stderr, "프로세스 생성 실패\n");
         return -1;
     }
     else if (pid == 0) {
-        // 자식 프로세스: 게임 실행
+        // 자식 프로세스 영역 (pid == 0)
+        // execlp(): 현재 프로세스를 새 프로그램으로 교체
+        // execlp(파일명, argv[0], argv[1], ..., NULL)
         execlp(command, command, NULL);
-        // execlp 실패 시
+        
+        // 여기까지 오면 execlp 실패 (게임 실행 안 됨)
         fprintf(stderr, "게임 실행 실패: %s\n", command);
-        exit(1);
+        exit(1);  // 자식 프로세스 종료
     }
     else {
-        // 부모 프로세스: 게임 종료 대기
+        // 부모 프로세스 영역 (pid > 0)
         int status;
+        
+        // waitpid(): 자식 프로세스가 종료될 때까지 대기
+        // 즉, 게임이 끝날 때까지 여기서 멈춰있음
         waitpid(pid, &status, 0);
         
+        // WIFEXITED(): 자식이 정상 종료했는지 확인
         if (WIFEXITED(status)) {
             printf("\n게임이 종료되었습니다.\n");
             return 0;
@@ -47,15 +62,19 @@ int run_game(const char* command) {
 }
 
 /**
- * 게임 선택 메뉴 표시
+ * 게임 선택 메뉴 출력
+ * @param games 게임 배열
+ * @param game_count 게임 개수
  */
 void show_game_menu(Game* games, int game_count) {
+    // 메뉴 헤더 출력
     printf("\n╔════════════════════════════════════════════════╗\n");
     printf("║         Tux 게임 로깅 시스템 (C)              ║\n");
     printf("╚════════════════════════════════════════════════╝\n\n");
     
     printf("플레이할 게임을 선택하세요:\n\n");
     
+    // 모든 게임을 반복하면서 출력
     for (int i = 0; i < game_count; i++) {
         printf("  [%d] %s\n", games[i].id, games[i].name);
         printf("      %s\n\n", games[i].description);
@@ -66,27 +85,29 @@ void show_game_menu(Game* games, int game_count) {
 }
 
 /**
- * 게임별 로그 파싱 (추후 구현)
+ * 게임별 로그 파싱 함수 (추후 구현)
+ * @param game_id 게임 번호
  */
 void parse_game_logs(int game_id) {
     printf("\n=== 로그 파싱 중... ===\n");
     
+    // switch-case: game_id 값에 따라 다른 동작
     switch(game_id) {
         case 1:
             printf("Neverball 로그 파싱 (추후 구현)\n");
-            // TODO: Neverball 로그 파싱
+            // TODO: Neverball 로그 파싱 코드 작성 예정
             break;
         case 2:
             printf("SuperTux 로그 파싱 (추후 구현)\n");
-            // TODO: SuperTux 로그 파싱
+            // TODO: SuperTux 로그 파싱 코드 작성 예정
             break;
         case 3:
             printf("Extreme Tux Racer 로그 파싱 (추후 구현)\n");
-            // TODO: ETR 로그 파싱
+            // TODO: ETR 로그 파싱 코드 작성 예정
             break;
         case 4:
             printf("Frozen Bubble 로그 파싱 (추후 구현)\n");
-            // TODO: Frozen Bubble 로그 파싱
+            // TODO: Frozen Bubble 로그 파싱 코드 작성 예정
             break;
         default:
             printf("알 수 없는 게임\n");
@@ -95,63 +116,80 @@ void parse_game_logs(int game_id) {
     printf("\n");
 }
 
+/**
+ * 메인 함수: 프로그램 시작점
+ */
 int main() {
-    // 4개 게임 정의
+    // 게임 배열 초기화
+    // {게임번호, "게임이름", "실행명령어", "설명"}
     Game games[] = {
         {1, "Neverball", "neverball", "🎱 공 굴리기 퍼즐 게임"},
         {2, "SuperTux", "supertux2", "🐧 슈퍼마리오 스타일 플랫포머"},
-        {3, "Extreme Tux Racer", "etracer", "⛷️  펭귄 스키 레이싱"},
+        {3, "Extreme Tux Racer", "etr", "⛷️  펭귄 스키 레이싱"},
         {4, "Frozen Bubble", "frozen-bubble", "🫧 버블 슈터 퍼즐"}
     };
+    
+    // sizeof(games): 전체 배열 크기 (바이트)
+    // sizeof(Game): 구조체 하나 크기 (바이트)
+    // 나누면 게임 개수가 나옴 (4개)
     int game_count = sizeof(games) / sizeof(Game);
     
+    // 시작 메시지
     printf("╔════════════════════════════════════════════════╗\n");
     printf("║              Tux Gaming System                 ║\n");
     printf("║          게임패드 로깅 프로젝트                ║\n");
     printf("╚════════════════════════════════════════════════╝\n");
     
+    // 무한 루프: 사용자가 0을 입력할 때까지 반복
     while (1) {
-        // 게임 메뉴 표시
+        // 1. 게임 메뉴 표시
         show_game_menu(games, game_count);
         
+        // 2. 사용자 입력 받기
         int choice;
+        // scanf: 정수 입력받기, 성공하면 1 반환
         if (scanf("%d", &choice) != 1) {
             printf("잘못된 입력입니다.\n");
-            while (getchar() != '\n'); // 입력 버퍼 비우기
-            continue;
+            // 입력 버퍼 비우기 (엔터키 등 남은 문자 제거)
+            while (getchar() != '\n');
+            continue;  // 다시 메뉴로
         }
         
-        // 종료
+        // 3. 종료 확인 (0 입력시)
         if (choice == 0) {
             printf("\n프로그램을 종료합니다.\n");
             printf("즐거운 게임이었습니다! 🐧\n\n");
-            break;
+            break;  // while 루프 탈출 -> 프로그램 종료
         }
         
-        // 게임 선택 확인
-        int game_index = -1;
+        // 4. 선택한 게임 찾기
+        int game_index = -1;  // -1은 "못 찾음"을 의미
         for (int i = 0; i < game_count; i++) {
             if (games[i].id == choice) {
-                game_index = i;
+                game_index = i;  // 찾았으면 인덱스 저장
                 break;
             }
         }
         
+        // 5. 잘못된 선택 처리
         if (game_index == -1) {
             printf("잘못된 선택입니다. 1~%d 중에서 선택하세요.\n", game_count);
-            continue;
+            continue;  // 다시 메뉴로
         }
         
-        // 게임 실행
+        // 6. 게임 실행
+        // games[game_index].command: 선택한 게임의 실행 명령어
         if (run_game(games[game_index].command) == 0) {
-            // 게임 종료 후 로그 파싱
+            // 게임이 정상 종료됨
+            // 7. 로그 파싱 (아직 구현 안 됨)
             parse_game_logs(games[game_index].id);
         }
         
+        // 8. 계속하려면 Enter 대기
         printf("\n계속하려면 Enter를 누르세요...");
-        getchar(); // 이전 입력의 개행 제거
-        getchar(); // Enter 대기
+        getchar(); // scanf 후 남은 개행 문자 제거
+        getchar(); // 실제 Enter 입력 대기
     }
     
-    return 0;
+    return 0;  // 프로그램 정상 종료
 }
