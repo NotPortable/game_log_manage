@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/jungwoo0719/Desktop/only_clone/game_log_manage/output/tux_game_launcher'
+relocations:     []
+...
