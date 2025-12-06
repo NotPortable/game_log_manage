@@ -2,27 +2,22 @@
  * Tux Gaming System - 게임 런처 with MPU-6050
  * 
  * 3개의 게임을 실행하고 MPU-6050으로 진동 감지
- * 로그 파싱은 Spring Boot에서 처리
+ * pigpio 라이브러리 사용
  */
 
  #include <stdio.h>
  #include <stdlib.h>
  #include <unistd.h>
  #include <sys/wait.h>
- #include <wiringPi.h>
- #include <wiringPiI2C.h>
+ #include <pigpio.h>
  #include <math.h>
  #include <pthread.h>
  
- // MPU-6050 레지스터 주소
+ // MPU-6050 I2C 주소 및 레지스터
  #define MPU6050_ADDR 0x68
  #define PWR_MGMT_1   0x6B
  #define ACCEL_XOUT_H 0x3B
- #define ACCEL_YOUT_H 0x3D
- #define ACCEL_ZOUT_H 0x3F
  #define GYRO_XOUT_H  0x43
- #define GYRO_YOUT_H  0x45
- #define GYRO_ZOUT_H  0x47
  
  // 진동 감지 임계값
  #define VIBRATION_THRESHOLD 2000
@@ -43,35 +38,18 @@
  } MPU6050Data;
  
  // 전역 변수
- int mpu_fd = -1;
+ int i2c_handle = -1;
  int vibration_detected = 0;
  pthread_t vibration_thread;
  int monitoring_active = 0;
  
  /**
-  * MPU-6050 초기화
+  * 16비트 값 읽기 (빅엔디안)
   */
- int init_mpu6050() {
-     mpu_fd = wiringPiI2CSetup(MPU6050_ADDR);
-     if (mpu_fd == -1) {
-         fprintf(stderr, "MPU-6050 연결 실패\n");
-         return -1;
-     }
+ int16_t read_word_2c(int reg) {
+     int high = i2cReadByteData(i2c_handle, reg);
+     int low = i2cReadByteData(i2c_handle, reg + 1);
      
-     // MPU-6050 Wake up (PWR_MGMT_1 레지스터를 0으로)
-     wiringPiI2CWriteReg8(mpu_fd, PWR_MGMT_1, 0);
-     usleep(100000); // 100ms 대기
-     
-     printf("✓ MPU-6050 초기화 완료\n");
-     return 0;
- }
- 
- /**
-  * 16비트 값 읽기
-  */
- int16_t read_word_2c(int addr) {
-     int high = wiringPiI2CReadReg8(mpu_fd, addr);
-     int low = wiringPiI2CReadReg8(mpu_fd, addr + 1);
      int val = (high << 8) + low;
      
      if (val >= 0x8000) {
@@ -82,15 +60,41 @@
  }
  
  /**
+  * MPU-6050 초기화
+  */
+ int init_mpu6050() {
+     // pigpio 초기화
+     if (gpioInitialise() < 0) {
+         fprintf(stderr, "pigpio 초기화 실패\n");
+         return -1;
+     }
+     
+     // I2C 열기 (bus 1, MPU6050 주소)
+     i2c_handle = i2cOpen(1, MPU6050_ADDR, 0);
+     if (i2c_handle < 0) {
+         fprintf(stderr, "MPU-6050 연결 실패 (I2C)\n");
+         fprintf(stderr, "I2C가 활성화되었는지 확인하세요: sudo raspi-config\n");
+         return -1;
+     }
+     
+     // MPU-6050 Wake up (PWR_MGMT_1 = 0)
+     i2cWriteByteData(i2c_handle, PWR_MGMT_1, 0);
+     usleep(100000); // 100ms 대기
+     
+     printf("✓ MPU-6050 초기화 완료\n");
+     return 0;
+ }
+ 
+ /**
   * MPU-6050 데이터 읽기
   */
  void read_mpu6050(MPU6050Data* data) {
      data->accel_x = read_word_2c(ACCEL_XOUT_H);
-     data->accel_y = read_word_2c(ACCEL_YOUT_H);
-     data->accel_z = read_word_2c(ACCEL_ZOUT_H);
+     data->accel_y = read_word_2c(ACCEL_XOUT_H + 2);
+     data->accel_z = read_word_2c(ACCEL_XOUT_H + 4);
      data->gyro_x = read_word_2c(GYRO_XOUT_H);
-     data->gyro_y = read_word_2c(GYRO_YOUT_H);
-     data->gyro_z = read_word_2c(GYRO_ZOUT_H);
+     data->gyro_y = read_word_2c(GYRO_XOUT_H + 2);
+     data->gyro_z = read_word_2c(GYRO_XOUT_H + 4);
      
      // 가속도 크기 계산
      data->magnitude = sqrt(
@@ -179,13 +183,17 @@
      printf("진동 감지가 활성화됩니다...\n\n");
      
      // 진동 모니터링 시작
-     start_vibration_monitoring();
+     if (i2c_handle >= 0) {
+         start_vibration_monitoring();
+     }
      
      pid_t pid = fork();
      
      if (pid < 0) {
          fprintf(stderr, "프로세스 생성 실패\n");
-         stop_vibration_monitoring();
+         if (i2c_handle >= 0) {
+             stop_vibration_monitoring();
+         }
          return -1;
      }
      else if (pid == 0) {
@@ -200,7 +208,9 @@
          waitpid(pid, &status, 0);
          
          // 진동 모니터링 중지
-         stop_vibration_monitoring();
+         if (i2c_handle >= 0) {
+             stop_vibration_monitoring();
+         }
          
          if (WIFEXITED(status)) {
              printf("\n게임이 종료되었습니다.\n");
@@ -230,7 +240,9 @@
          printf("      %s\n\n", games[i].description);
      }
      
-     printf("  [9] MPU-6050 상태 확인\n");
+     if (i2c_handle >= 0) {
+         printf("  [9] MPU-6050 상태 확인\n");
+     }
      printf("  [0] 종료\n\n");
      printf("선택: ");
  }
@@ -239,17 +251,11 @@
   * 메인 함수
   */
  int main() {
-     // WiringPi 초기화
-     if (wiringPiSetup() == -1) {
-         fprintf(stderr, "WiringPi 초기화 실패\n");
-         return 1;
-     }
-     
      // MPU-6050 초기화
      if (init_mpu6050() == -1) {
          fprintf(stderr, "MPU-6050 초기화 실패. 센서 연결을 확인하세요.\n");
          fprintf(stderr, "진동 감지 기능 없이 계속 진행합니다.\n");
-         mpu_fd = -1; // 센서 없이 진행
+         i2c_handle = -1; // 센서 없이 진행
      }
      
      // 3개 게임 정의
@@ -282,12 +288,8 @@
          }
          
          // MPU-6050 상태 확인
-         if (choice == 9) {
-             if (mpu_fd != -1) {
-                 check_mpu6050_status();
-             } else {
-                 printf("MPU-6050 센서가 연결되지 않았습니다.\n");
-             }
+         if (choice == 9 && i2c_handle >= 0) {
+             check_mpu6050_status();
              printf("\n계속하려면 Enter를 누르세요...");
              getchar();
              getchar();
@@ -307,19 +309,18 @@
              continue;
          }
          
-         // 센서가 연결된 경우에만 진동 감지
-         if (mpu_fd != -1) {
-             run_game(games[game_index].command);
-         } else {
-             // 센서 없이 게임만 실행
-             printf("\n게임을 실행합니다: %s\n", games[game_index].command);
-             system(games[game_index].command);
-         }
+         run_game(games[game_index].command);
          
          printf("\n계속하려면 Enter를 누르세요...");
          getchar();
          getchar();
      }
+     
+     // 종료 시 pigpio 정리
+     if (i2c_handle >= 0) {
+         i2cClose(i2c_handle);
+     }
+     gpioTerminate();
      
      return 0;
  }
