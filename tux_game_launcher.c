@@ -82,7 +82,8 @@
      }
      
      // I2C 장치 열기
-     i2c_handle = lgI2cOpen(gpio_chip, I2C_BUS, MPU6050_ADDR, 0);
+     // lgI2cOpen(i2c_bus, i2c_address, flags)
+     i2c_handle = lgI2cOpen(I2C_BUS, MPU6050_ADDR, 0);
      if (i2c_handle < 0) {
          fprintf(stderr, "MPU-6050 연결 실패 (I2C)\n");
          fprintf(stderr, "I2C가 활성화되었는지 확인: sudo raspi-config\n");
