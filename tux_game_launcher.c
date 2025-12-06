@@ -2,22 +2,26 @@
  * Tux Gaming System - 게임 런처 with MPU-6050
  * 
  * 3개의 게임을 실행하고 MPU-6050으로 진동 감지
- * pigpio 라이브러리 사용
+ * lgpio 라이브러리 사용 (최신)
  */
 
  #include <stdio.h>
  #include <stdlib.h>
  #include <unistd.h>
  #include <sys/wait.h>
- #include <pigpio.h>
+ #include <lgpio.h>
  #include <math.h>
  #include <pthread.h>
+ #include <string.h>
  
  // MPU-6050 I2C 주소 및 레지스터
  #define MPU6050_ADDR 0x68
  #define PWR_MGMT_1   0x6B
  #define ACCEL_XOUT_H 0x3B
  #define GYRO_XOUT_H  0x43
+ 
+ // I2C 버스
+ #define I2C_BUS 1
  
  // 진동 감지 임계값
  #define VIBRATION_THRESHOLD 2000
@@ -38,6 +42,7 @@
  } MPU6050Data;
  
  // 전역 변수
+ int gpio_chip = -1;
  int i2c_handle = -1;
  int vibration_detected = 0;
  pthread_t vibration_thread;
@@ -47,11 +52,16 @@
   * 16비트 값 읽기 (빅엔디안)
   */
  int16_t read_word_2c(int reg) {
-     int high = i2cReadByteData(i2c_handle, reg);
-     int low = i2cReadByteData(i2c_handle, reg + 1);
+     char buf[2];
      
-     int val = (high << 8) + low;
+     // 2바이트 읽기
+     if (lgI2cReadI2CBlockData(gpio_chip, i2c_handle, reg, buf, 2) != 2) {
+         return 0;
+     }
      
+     int val = (buf[0] << 8) | buf[1];
+     
+     // 2의 보수 변환
      if (val >= 0x8000) {
          return -((65535 - val) + 1);
      } else {
@@ -63,22 +73,31 @@
   * MPU-6050 초기화
   */
  int init_mpu6050() {
-     // pigpio 초기화
-     if (gpioInitialise() < 0) {
-         fprintf(stderr, "pigpio 초기화 실패\n");
+     // GPIO 칩 열기
+     gpio_chip = lgGpiochipOpen(0);
+     if (gpio_chip < 0) {
+         fprintf(stderr, "GPIO 칩 열기 실패\n");
          return -1;
      }
      
-     // I2C 열기 (bus 1, MPU6050 주소)
-     i2c_handle = i2cOpen(1, MPU6050_ADDR, 0);
+     // I2C 장치 열기
+     i2c_handle = lgI2cOpen(gpio_chip, I2C_BUS, MPU6050_ADDR, 0);
      if (i2c_handle < 0) {
          fprintf(stderr, "MPU-6050 연결 실패 (I2C)\n");
-         fprintf(stderr, "I2C가 활성화되었는지 확인하세요: sudo raspi-config\n");
+         fprintf(stderr, "I2C가 활성화되었는지 확인: sudo raspi-config\n");
+         fprintf(stderr, "센서 연결 확인: VCC(3.3V), GND, SDA(Pin3), SCL(Pin5)\n");
+         lgGpiochipClose(gpio_chip);
          return -1;
      }
      
      // MPU-6050 Wake up (PWR_MGMT_1 = 0)
-     i2cWriteByteData(i2c_handle, PWR_MGMT_1, 0);
+     if (lgI2cWriteByteData(gpio_chip, i2c_handle, PWR_MGMT_1, 0) < 0) {
+         fprintf(stderr, "MPU-6050 초기화 명령 실패\n");
+         lgI2cClose(gpio_chip, i2c_handle);
+         lgGpiochipClose(gpio_chip);
+         return -1;
+     }
+     
      usleep(100000); // 100ms 대기
      
      printf("✓ MPU-6050 초기화 완료\n");
@@ -180,11 +199,12 @@
  int run_game(const char* command) {
      printf("\n게임을 실행합니다: %s\n", command);
      printf("게임을 플레이하세요!\n");
-     printf("진동 감지가 활성화됩니다...\n\n");
      
-     // 진동 모니터링 시작
      if (i2c_handle >= 0) {
+         printf("진동 감지가 활성화됩니다...\n\n");
          start_vibration_monitoring();
+     } else {
+         printf("\n");
      }
      
      pid_t pid = fork();
@@ -230,7 +250,9 @@
  void show_game_menu(Game* games, int game_count) {
      printf("\n╔════════════════════════════════════════════════╗\n");
      printf("║         Tux 게임 로깅 시스템 (C)              ║\n");
-     printf("║            with MPU-6050 진동 감지            ║\n");
+     if (i2c_handle >= 0) {
+         printf("║            with MPU-6050 진동 감지            ║\n");
+     }
      printf("╚════════════════════════════════════════════════╝\n\n");
      
      printf("플레이할 게임을 선택하세요:\n\n");
@@ -252,10 +274,12 @@
   */
  int main() {
      // MPU-6050 초기화
+     printf("MPU-6050 센서 초기화 중...\n");
      if (init_mpu6050() == -1) {
-         fprintf(stderr, "MPU-6050 초기화 실패. 센서 연결을 확인하세요.\n");
-         fprintf(stderr, "진동 감지 기능 없이 계속 진행합니다.\n");
-         i2c_handle = -1; // 센서 없이 진행
+         fprintf(stderr, "\n⚠️  MPU-6050 초기화 실패\n");
+         fprintf(stderr, "진동 감지 기능 없이 계속 진행합니다.\n\n");
+         i2c_handle = -1;
+         gpio_chip = -1;
      }
      
      // 3개 게임 정의
@@ -316,11 +340,13 @@
          getchar();
      }
      
-     // 종료 시 pigpio 정리
+     // 종료 시 정리
      if (i2c_handle >= 0) {
-         i2cClose(i2c_handle);
+         lgI2cClose(gpio_chip, i2c_handle);
      }
-     gpioTerminate();
+     if (gpio_chip >= 0) {
+         lgGpiochipClose(gpio_chip);
+     }
      
      return 0;
  }
