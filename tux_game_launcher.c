@@ -55,7 +55,8 @@
      char buf[2];
      
      // 2바이트 읽기
-     if (lgI2cReadI2CBlockData(gpio_chip, i2c_handle, reg, buf, 2) != 2) {
+     // lgI2cReadI2CBlockData(handle, register, buffer, count)
+     if (lgI2cReadI2CBlockData(i2c_handle, reg, buf, 2) != 2) {
          return 0;
      }
      
@@ -91,9 +92,9 @@
      }
      
      // MPU-6050 Wake up (PWR_MGMT_1 = 0)
-     if (lgI2cWriteByteData(gpio_chip, i2c_handle, PWR_MGMT_1, 0) < 0) {
+     if (lgI2cWriteByteData(i2c_handle, PWR_MGMT_1, 0) < 0) {
          fprintf(stderr, "MPU-6050 초기화 명령 실패\n");
-         lgI2cClose(gpio_chip, i2c_handle);
+         lgI2cClose(i2c_handle);
          lgGpiochipClose(gpio_chip);
          return -1;
      }
@@ -342,7 +343,7 @@
      
      // 종료 시 정리
      if (i2c_handle >= 0) {
-         lgI2cClose(gpio_chip, i2c_handle);
+         lgI2cClose(i2c_handle);
      }
      if (gpio_chip >= 0) {
          lgGpiochipClose(gpio_chip);
