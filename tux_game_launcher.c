@@ -1,7 +1,7 @@
 /**
- * Tux Gaming System - 게임 런처
+ * Tux Gaming System - 게임 런처 with MPU-6050
  * 
- * 4개의 게임을 실행하는 간단한 런처
+ * 3개의 게임을 실행하고 MPU-6050으로 진동 감지
  * 로그 파싱은 Spring Boot에서 처리
  */
 
@@ -9,6 +9,23 @@
  #include <stdlib.h>
  #include <unistd.h>
  #include <sys/wait.h>
+ #include <wiringPi.h>
+ #include <wiringPiI2C.h>
+ #include <math.h>
+ #include <pthread.h>
+ 
+ // MPU-6050 레지스터 주소
+ #define MPU6050_ADDR 0x68
+ #define PWR_MGMT_1   0x6B
+ #define ACCEL_XOUT_H 0x3B
+ #define ACCEL_YOUT_H 0x3D
+ #define ACCEL_ZOUT_H 0x3F
+ #define GYRO_XOUT_H  0x43
+ #define GYRO_YOUT_H  0x45
+ #define GYRO_ZOUT_H  0x47
+ 
+ // 진동 감지 임계값
+ #define VIBRATION_THRESHOLD 2000
  
  // 게임 정보 구조체
  typedef struct {
@@ -18,17 +35,157 @@
      char description[100];
  } Game;
  
+ // MPU-6050 데이터 구조체
+ typedef struct {
+     int16_t accel_x, accel_y, accel_z;
+     int16_t gyro_x, gyro_y, gyro_z;
+     float magnitude;
+ } MPU6050Data;
+ 
+ // 전역 변수
+ int mpu_fd = -1;
+ int vibration_detected = 0;
+ pthread_t vibration_thread;
+ int monitoring_active = 0;
+ 
+ /**
+  * MPU-6050 초기화
+  */
+ int init_mpu6050() {
+     mpu_fd = wiringPiI2CSetup(MPU6050_ADDR);
+     if (mpu_fd == -1) {
+         fprintf(stderr, "MPU-6050 연결 실패\n");
+         return -1;
+     }
+     
+     // MPU-6050 Wake up (PWR_MGMT_1 레지스터를 0으로)
+     wiringPiI2CWriteReg8(mpu_fd, PWR_MGMT_1, 0);
+     usleep(100000); // 100ms 대기
+     
+     printf("✓ MPU-6050 초기화 완료\n");
+     return 0;
+ }
+ 
+ /**
+  * 16비트 값 읽기
+  */
+ int16_t read_word_2c(int addr) {
+     int high = wiringPiI2CReadReg8(mpu_fd, addr);
+     int low = wiringPiI2CReadReg8(mpu_fd, addr + 1);
+     int val = (high << 8) + low;
+     
+     if (val >= 0x8000) {
+         return -((65535 - val) + 1);
+     } else {
+         return val;
+     }
+ }
+ 
+ /**
+  * MPU-6050 데이터 읽기
+  */
+ void read_mpu6050(MPU6050Data* data) {
+     data->accel_x = read_word_2c(ACCEL_XOUT_H);
+     data->accel_y = read_word_2c(ACCEL_YOUT_H);
+     data->accel_z = read_word_2c(ACCEL_ZOUT_H);
+     data->gyro_x = read_word_2c(GYRO_XOUT_H);
+     data->gyro_y = read_word_2c(GYRO_YOUT_H);
+     data->gyro_z = read_word_2c(GYRO_ZOUT_H);
+     
+     // 가속도 크기 계산
+     data->magnitude = sqrt(
+         data->accel_x * data->accel_x +
+         data->accel_y * data->accel_y +
+         data->accel_z * data->accel_z
+     );
+ }
+ 
+ /**
+  * 진동 모니터링 스레드
+  */
+ void* vibration_monitor(void* arg) {
+     MPU6050Data data;
+     MPU6050Data prev_data = {0};
+     
+     printf("진동 모니터링 시작...\n");
+     
+     while (monitoring_active) {
+         read_mpu6050(&data);
+         
+         // 이전 값과의 차이 계산
+         float delta = fabs(data.magnitude - prev_data.magnitude);
+         
+         // 진동 감지
+         if (delta > VIBRATION_THRESHOLD) {
+             vibration_detected = 1;
+             printf("🔴 진동 감지! (강도: %.2f)\n", delta);
+         }
+         
+         prev_data = data;
+         usleep(50000); // 50ms마다 체크
+     }
+     
+     return NULL;
+ }
+ 
+ /**
+  * 진동 모니터링 시작
+  */
+ void start_vibration_monitoring() {
+     vibration_detected = 0;
+     monitoring_active = 1;
+     
+     if (pthread_create(&vibration_thread, NULL, vibration_monitor, NULL) != 0) {
+         fprintf(stderr, "진동 모니터링 스레드 생성 실패\n");
+     }
+ }
+ 
+ /**
+  * 진동 모니터링 중지
+  */
+ void stop_vibration_monitoring() {
+     monitoring_active = 0;
+     pthread_join(vibration_thread, NULL);
+     
+     if (vibration_detected) {
+         printf("✓ 게임 중 진동이 감지되었습니다.\n");
+     } else {
+         printf("✓ 게임 중 진동이 감지되지 않았습니다.\n");
+     }
+ }
+ 
+ /**
+  * MPU-6050 상태 확인 및 출력
+  */
+ void check_mpu6050_status() {
+     MPU6050Data data;
+     read_mpu6050(&data);
+     
+     printf("\n=== MPU-6050 센서 상태 ===\n");
+     printf("가속도계:\n");
+     printf("  X: %6d  Y: %6d  Z: %6d\n", data.accel_x, data.accel_y, data.accel_z);
+     printf("자이로스코프:\n");
+     printf("  X: %6d  Y: %6d  Z: %6d\n", data.gyro_x, data.gyro_y, data.gyro_z);
+     printf("가속도 크기: %.2f\n", data.magnitude);
+     printf("========================\n\n");
+ }
+ 
  /**
   * 게임 실행 함수
   */
  int run_game(const char* command) {
      printf("\n게임을 실행합니다: %s\n", command);
-     printf("게임을 플레이하세요!\n\n");
+     printf("게임을 플레이하세요!\n");
+     printf("진동 감지가 활성화됩니다...\n\n");
+     
+     // 진동 모니터링 시작
+     start_vibration_monitoring();
      
      pid_t pid = fork();
      
      if (pid < 0) {
          fprintf(stderr, "프로세스 생성 실패\n");
+         stop_vibration_monitoring();
          return -1;
      }
      else if (pid == 0) {
@@ -41,6 +198,9 @@
          // 부모: 게임 종료 대기
          int status;
          waitpid(pid, &status, 0);
+         
+         // 진동 모니터링 중지
+         stop_vibration_monitoring();
          
          if (WIFEXITED(status)) {
              printf("\n게임이 종료되었습니다.\n");
@@ -60,6 +220,7 @@
  void show_game_menu(Game* games, int game_count) {
      printf("\n╔════════════════════════════════════════════════╗\n");
      printf("║         Tux 게임 로깅 시스템 (C)              ║\n");
+     printf("║            with MPU-6050 진동 감지            ║\n");
      printf("╚════════════════════════════════════════════════╝\n\n");
      
      printf("플레이할 게임을 선택하세요:\n\n");
@@ -69,6 +230,7 @@
          printf("      %s\n\n", games[i].description);
      }
      
+     printf("  [9] MPU-6050 상태 확인\n");
      printf("  [0] 종료\n\n");
      printf("선택: ");
  }
@@ -77,12 +239,24 @@
   * 메인 함수
   */
  int main() {
-     // 4개 게임 정의
+     // WiringPi 초기화
+     if (wiringPiSetup() == -1) {
+         fprintf(stderr, "WiringPi 초기화 실패\n");
+         return 1;
+     }
+     
+     // MPU-6050 초기화
+     if (init_mpu6050() == -1) {
+         fprintf(stderr, "MPU-6050 초기화 실패. 센서 연결을 확인하세요.\n");
+         fprintf(stderr, "진동 감지 기능 없이 계속 진행합니다.\n");
+         mpu_fd = -1; // 센서 없이 진행
+     }
+     
+     // 3개 게임 정의
      Game games[] = {
          {1, "Neverball", "neverball", "🎱 공 굴리기 퍼즐 게임"},
          {2, "SuperTux", "supertux2", "🐧 슈퍼마리오 스타일 플랫포머"},
-         {3, "Extreme Tux Racer", "etr", "⛷️  펭귄 스키 레이싱"},
-         {4, "Frozen Bubble", "frozen-bubble", "🫧 버블 슈터 퍼즐"}
+         {3, "Extreme Tux Racer", "etr", "⛷️  펭귄 스키 레이싱"}
      };
      int game_count = sizeof(games) / sizeof(Game);
      
@@ -107,6 +281,19 @@
              break;
          }
          
+         // MPU-6050 상태 확인
+         if (choice == 9) {
+             if (mpu_fd != -1) {
+                 check_mpu6050_status();
+             } else {
+                 printf("MPU-6050 센서가 연결되지 않았습니다.\n");
+             }
+             printf("\n계속하려면 Enter를 누르세요...");
+             getchar();
+             getchar();
+             continue;
+         }
+         
          int game_index = -1;
          for (int i = 0; i < game_count; i++) {
              if (games[i].id == choice) {
@@ -120,7 +307,14 @@
              continue;
          }
          
-         run_game(games[game_index].command);
+         // 센서가 연결된 경우에만 진동 감지
+         if (mpu_fd != -1) {
+             run_game(games[game_index].command);
+         } else {
+             // 센서 없이 게임만 실행
+             printf("\n게임을 실행합니다: %s\n", games[game_index].command);
+             system(games[game_index].command);
+         }
          
          printf("\n계속하려면 Enter를 누르세요...");
          getchar();
