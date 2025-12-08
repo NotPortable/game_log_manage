@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <math.h>
+#include <sys/time.h>
 
 // 초음파 센서 핀 설정 (GPIO 번호)
 #define TRIG_PIN 23
@@ -22,13 +23,15 @@ int sensor_running = 0;
 float last_distance = -1.0;
 int anomaly_detected = 0;
 
-// 게임 로그 파일 경로
-const char* NEVERBALL_LOG = "/home/jungwoo/.neverball/game_log.txt";
-const char* SUPERTUX_LOG = "/home/jungwoo/.local/share/supertux2/profile/game_log.txt";
-const char* ETR_LOG = "/home/jungwoo/.config/etr/game_log.txt";
-
 // SuperTux 사용자 이름 저장 파일
 const char* SUPERTUX_USERNAME_FILE = "/tmp/supertux_username.txt";
+
+// 마이크로초 단위 시간 가져오기
+long long get_microseconds() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (long long)tv.tv_sec * 1000000 + tv.tv_usec;
+}
 
 // 사용자 이름을 파일에 저장
 void save_username_to_file(const char* username) {
@@ -46,54 +49,70 @@ void save_username_to_file(const char* username) {
 int init_ultrasonic() {
     gpio_handle = lgGpiochipOpen(0);
     if (gpio_handle < 0) {
-        printf("❌ GPIO 초기화 실패\n");
+        printf("❌ GPIO 초기화 실패: %d\n", gpio_handle);
         return -1;
     }
     
     // TRIG 핀을 출력으로 설정
-    if (lgGpioClaimOutput(gpio_handle, 0, TRIG_PIN, 0) < 0) {
-        printf("❌ TRIG 핀 설정 실패\n");
+    int trig_result = lgGpioClaimOutput(gpio_handle, 0, TRIG_PIN, 0);
+    if (trig_result < 0) {
+        printf("❌ TRIG 핀 설정 실패 (GPIO %d): %d\n", TRIG_PIN, trig_result);
         return -1;
     }
     
     // ECHO 핀을 입력으로 설정
-    if (lgGpioClaimInput(gpio_handle, 0, ECHO_PIN) < 0) {
-        printf("❌ ECHO 핀 설정 실패\n");
+    int echo_result = lgGpioClaimInput(gpio_handle, 0, ECHO_PIN);
+    if (echo_result < 0) {
+        printf("❌ ECHO 핀 설정 실패 (GPIO %d): %d\n", ECHO_PIN, echo_result);
         return -1;
     }
     
     printf("✅ 초음파 센서 초기화 완료\n");
+    printf("   TRIG: GPIO %d (Physical Pin 16)\n", TRIG_PIN);
+    printf("   ECHO: GPIO %d (Physical Pin 18)\n", ECHO_PIN);
     return 0;
 }
 
-// 거리 측정
+// 거리 측정 (마이크로초 단위)
 float measure_distance() {
     if (gpio_handle < 0) return -1.0;
     
     // TRIG 핀에 10us 펄스 전송
+    lgGpioWrite(gpio_handle, TRIG_PIN, 0);
+    usleep(2);
     lgGpioWrite(gpio_handle, TRIG_PIN, 1);
     usleep(10);
     lgGpioWrite(gpio_handle, TRIG_PIN, 0);
     
-    // ECHO 핀이 HIGH가 될 때까지 대기
-    long start_time = 0, end_time = 0;
-    long timeout = 1000000; // 1초 타임아웃
-    long wait_start = time(NULL);
-    
+    // ECHO 핀이 HIGH가 될 때까지 대기 (타임아웃 100ms)
+    long long timeout_start = get_microseconds();
     while (lgGpioRead(gpio_handle, ECHO_PIN) == 0) {
-        start_time = time(NULL);
-        if (start_time - wait_start > timeout) return -1.0;
+        if (get_microseconds() - timeout_start > 100000) {
+            printf("⚠️  ECHO HIGH 대기 타임아웃\n");
+            return -1.0;
+        }
     }
+    long long pulse_start = get_microseconds();
     
-    // ECHO 핀이 LOW가 될 때까지 대기
+    // ECHO 핀이 LOW가 될 때까지 대기 (타임아웃 100ms)
+    timeout_start = get_microseconds();
     while (lgGpioRead(gpio_handle, ECHO_PIN) == 1) {
-        end_time = time(NULL);
-        if (end_time - start_time > timeout) return -1.0;
+        if (get_microseconds() - timeout_start > 100000) {
+            printf("⚠️  ECHO LOW 대기 타임아웃\n");
+            return -1.0;
+        }
     }
+    long long pulse_end = get_microseconds();
     
     // 거리 계산 (cm)
-    long duration = end_time - start_time;
-    float distance = (duration * 34300.0) / 2.0 / 1000000.0;
+    long long duration_us = pulse_end - pulse_start;
+    float distance = (duration_us * 0.0343) / 2.0;  // 음속 343m/s = 0.0343cm/us
+    
+    // 유효 범위 체크 (2cm ~ 400cm)
+    if (distance < 2.0 || distance > 400.0) {
+        printf("⚠️  측정값 범위 초과: %.2f cm\n", distance);
+        return -1.0;
+    }
     
     return distance;
 }
@@ -115,7 +134,7 @@ void* sensor_monitoring_thread(void* arg) {
                 
                 if (diff > ANOMALY_THRESHOLD) {
                     anomaly_detected = 1;
-                    printf(" ⚠️  이상 감지! (변화량: %.2f cm)\n", diff);
+                    printf(" 🚨 이상 감지! (변화량: %.2f cm)\n", diff);
                 } else {
                     anomaly_detected = 0;
                     printf(" ✅ 정상\n");
@@ -163,33 +182,6 @@ void stop_sensor_monitoring() {
     }
 }
 
-// 게임 로그 기록
-void log_game_result(const char* game_name, const char* username, const char* log_file, const char* data) {
-    FILE* fp = fopen(log_file, "a");
-    if (fp == NULL) {
-        printf("❌ 로그 파일 열기 실패: %s\n", log_file);
-        return;
-    }
-    
-    // 이상 감지 플래그 추가
-    const char* anomaly_flag = anomaly_detected ? "ANOMALY" : "NORMAL";
-    
-    // 시간 정보
-    time_t now = time(NULL);
-    char timestamp[64];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    
-    // 로그 작성
-    fprintf(fp, "%s %s %s %s\n", username, data, anomaly_flag, timestamp);
-    fclose(fp);
-    
-    if (anomaly_detected) {
-        printf("⚠️  [%s] 이상 데이터로 기록됨\n", game_name);
-    } else {
-        printf("✅ [%s] 정상 데이터로 기록됨\n", game_name);
-    }
-}
-
 // 게임 실행
 void launch_game(int choice) {
     char username[100];
@@ -211,25 +203,23 @@ void launch_game(int choice) {
         case 1:
             printf("🏀 Neverball 실행 (플레이어: %s)\n", username);
             system("neverball");
-            // 게임 종료 후 로그 기록 (예시)
-            log_game_result("Neverball", username, NEVERBALL_LOG, "107 10000 187 05:23");
             break;
             
         case 2:
             printf("🐧 SuperTux 실행 (플레이어: %s)\n", username);
             system("supertux2");
-            log_game_result("SuperTux", username, SUPERTUX_LOG, "world1-3 156 2 142.8");
             break;
             
         case 3:
             printf("🎿 ETR 실행 (플레이어: %s)\n", username);
             system("etracer");
-            log_game_result("ETR", username, ETR_LOG, "Easy_Run 8562 23 02:15.32");
             break;
     }
     
     // 센서 모니터링 중지
     stop_sensor_monitoring();
+    
+    printf("\n✅ 게임 종료\n");
 }
 
 // 센서 상태 확인
