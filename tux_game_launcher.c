@@ -108,12 +108,6 @@ float measure_distance() {
     long long duration_us = pulse_end - pulse_start;
     float distance = (duration_us * 0.0343) / 2.0;  // 음속 343m/s = 0.0343cm/us
     
-    // 유효 범위 체크 (2cm ~ 400cm)
-    if (distance < 2.0 || distance > 400.0) {
-        printf("⚠️  측정값 범위 초과: %.2f cm\n", distance);
-        return -1.0;
-    }
-    
     return distance;
 }
 
