@@ -31,7 +31,7 @@ void launch_game(int choice) {
                 
             case 3:
                 printf("🎿 ETR 실행 중...\n");
-                execl("/usr/games/etracer", "etracer", NULL);
+                execl("/usr/games/etr", "etracer", NULL);
                 // execl 실패시
                 printf("❌ ETR 실행 실패\n");
                 exit(1);
