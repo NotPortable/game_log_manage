@@ -3,8 +3,32 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+// SuperTux 사용자 이름 저장 파일
+const char* SUPERTUX_USERNAME_FILE = "/tmp/supertux_username.txt";
+
+// 사용자 이름을 파일에 저장
+void save_username_to_file(const char* username) {
+    FILE* fp = fopen(SUPERTUX_USERNAME_FILE, "w");
+    if (fp) {
+        fprintf(fp, "%s", username);
+        fclose(fp);
+        printf("✅ 사용자 이름 저장: %s\n", username);
+    } else {
+        printf("⚠️  사용자 이름 저장 실패\n");
+    }
+}
+
 // 게임 실행
 void launch_game(int choice) {
+    char username[100];
+    printf("\n사용자 이름을 입력하세요: ");
+    scanf("%s", username);
+    
+    // SuperTux의 경우 사용자 이름 파일에 저장
+    if (choice == 2) {
+        save_username_to_file(username);
+    }
+    
     pid_t pid = fork();
     
     if (pid < 0) {
@@ -16,22 +40,22 @@ void launch_game(int choice) {
         // 자식 프로세스
         switch(choice) {
             case 1:
-                printf("🏀 Neverball 실행 중...\n");
+                printf("🏀 Neverball 실행 (플레이어: %s)\n", username);
                 execl("/usr/games/neverball", "neverball", NULL);
                 // execl 실패시
                 printf("❌ Neverball 실행 실패\n");
                 exit(1);
                 
             case 2:
-                printf("🐧 SuperTux 실행 중...\n");
+                printf("🐧 SuperTux 실행 (플레이어: %s)\n", username);
                 execl("/usr/games/supertux2", "supertux2", NULL);
                 // execl 실패시
                 printf("❌ SuperTux 실행 실패\n");
                 exit(1);
                 
             case 3:
-                printf("🎿 ETR 실행 중...\n");
-                execl("/usr/games/etr", "etracer", NULL);
+                printf("🎿 ETR 실행 (플레이어: %s)\n", username);
+                execl("/usr/games/etracer", "etracer", NULL);
                 // execl 실패시
                 printf("❌ ETR 실행 실패\n");
                 exit(1);
