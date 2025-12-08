@@ -22,11 +22,6 @@ int sensor_running = 0;
 float last_distance = -1.0;
 int anomaly_detected = 0;
 
-// 게임 로그 파일 경로
-const char* NEVERBALL_LOG = "/home/jungwoo/.neverball/game_log.txt";
-const char* SUPERTUX_LOG = "/home/jungwoo/.local/share/supertux2/profile/game_log.txt";
-const char* ETR_LOG = "/home/jungwoo/.config/etr/game_log.txt";
-
 // 초음파 센서 초기화
 int init_ultrasonic() {
     gpio_handle = lgGpiochipOpen(0);
@@ -148,39 +143,8 @@ void stop_sensor_monitoring() {
     }
 }
 
-// 게임 로그 기록
-void log_game_result(const char* game_name, const char* username, const char* log_file, const char* data) {
-    FILE* fp = fopen(log_file, "a");
-    if (fp == NULL) {
-        printf("❌ 로그 파일 열기 실패: %s\n", log_file);
-        return;
-    }
-    
-    // 이상 감지 플래그 추가
-    const char* anomaly_flag = anomaly_detected ? "ANOMALY" : "NORMAL";
-    
-    // 시간 정보
-    time_t now = time(NULL);
-    char timestamp[64];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    
-    // 로그 작성
-    fprintf(fp, "%s %s %s %s\n", username, data, anomaly_flag, timestamp);
-    fclose(fp);
-    
-    if (anomaly_detected) {
-        printf("⚠️  [%s] 이상 데이터로 기록됨\n", game_name);
-    } else {
-        printf("✅ [%s] 정상 데이터로 기록됨\n", game_name);
-    }
-}
-
 // 게임 실행
 void launch_game(int choice) {
-    char username[100];
-    printf("\n사용자 이름을 입력하세요: ");
-    scanf("%s", username);
-    
     // 센서 모니터링 시작
     start_sensor_monitoring();
     
@@ -189,19 +153,18 @@ void launch_game(int choice) {
     
     switch(choice) {
         case 1:
+            printf("🏀 Neverball 실행\n");
             system("neverball");
-            // 게임 종료 후 로그 기록 (예시)
-            log_game_result("Neverball", username, NEVERBALL_LOG, "107 10000 187 05:23");
             break;
             
         case 2:
+            printf("🐧 SuperTux 실행\n");
             system("supertux2");
-            log_game_result("SuperTux", username, SUPERTUX_LOG, "world1-3 156 2 142.8");
             break;
             
         case 3:
+            printf("🎿 ETR 실행\n");
             system("etracer");
-            log_game_result("ETR", username, ETR_LOG, "Easy_Run 8562 23 02:15.32");
             break;
     }
     
