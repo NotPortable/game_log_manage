@@ -27,6 +27,21 @@ const char* NEVERBALL_LOG = "/home/jungwoo/.neverball/game_log.txt";
 const char* SUPERTUX_LOG = "/home/jungwoo/.local/share/supertux2/profile/game_log.txt";
 const char* ETR_LOG = "/home/jungwoo/.config/etr/game_log.txt";
 
+// SuperTux 사용자 이름 저장 파일
+const char* SUPERTUX_USERNAME_FILE = "/tmp/supertux_username.txt";
+
+// 사용자 이름을 파일에 저장
+void save_username_to_file(const char* username) {
+    FILE* fp = fopen(SUPERTUX_USERNAME_FILE, "w");
+    if (fp) {
+        fprintf(fp, "%s", username);
+        fclose(fp);
+        printf("✅ 사용자 이름 저장: %s\n", username);
+    } else {
+        printf("⚠️  사용자 이름 저장 실패\n");
+    }
+}
+
 // 초음파 센서 초기화
 int init_ultrasonic() {
     gpio_handle = lgGpiochipOpen(0);
@@ -181,6 +196,11 @@ void launch_game(int choice) {
     printf("\n사용자 이름을 입력하세요: ");
     scanf("%s", username);
     
+    // SuperTux의 경우 사용자 이름 파일에 저장
+    if (choice == 2) {
+        save_username_to_file(username);
+    }
+    
     // 센서 모니터링 시작
     start_sensor_monitoring();
     
@@ -189,17 +209,20 @@ void launch_game(int choice) {
     
     switch(choice) {
         case 1:
+            printf("🏀 Neverball 실행 (플레이어: %s)\n", username);
             system("neverball");
             // 게임 종료 후 로그 기록 (예시)
             log_game_result("Neverball", username, NEVERBALL_LOG, "107 10000 187 05:23");
             break;
             
         case 2:
+            printf("🐧 SuperTux 실행 (플레이어: %s)\n", username);
             system("supertux2");
             log_game_result("SuperTux", username, SUPERTUX_LOG, "world1-3 156 2 142.8");
             break;
             
         case 3:
+            printf("🎿 ETR 실행 (플레이어: %s)\n", username);
             system("etracer");
             log_game_result("ETR", username, ETR_LOG, "Easy_Run 8562 23 02:15.32");
             break;
