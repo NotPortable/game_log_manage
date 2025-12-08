@@ -105,11 +105,14 @@ float measure_distance() {
     long long pulse_end = get_microseconds();
     
     // 거리 계산 (cm)
-    // Python parser와 동일한 계산식 사용
-    // 음속 = 34300 cm/s = 343 m/s
-    // 왕복 거리이므로 / 2
+    // Python parser와 동일한 계산식
+    // pulse_duration (초) * 17150 = 거리(cm)
     long long duration_us = pulse_end - pulse_start;
-    float distance = (duration_us / 1000000.0) * 17150.0;  // 초 단위로 변환 후 17150 곱하기
+    double duration_sec = duration_us / 1000000.0;  // 마이크로초 → 초
+    float distance = duration_sec * 17150.0;
+    
+    printf("   [디버그] duration_us=%lld, duration_sec=%.6f, distance=%.2f\n", 
+           duration_us, duration_sec, distance);
     
     return distance;
 }
